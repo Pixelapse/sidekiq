@@ -34,6 +34,8 @@ module Sidekiq
                 # they are pushed onto a work queue and losing the jobs.
                 while message = conn.zrangebyscore(sorted_set, '-inf', now, :limit => [0, 1]).first do
 
+                  # Run before pop callback
+
                   # Pop item off the queue and add it to the work queue. If the job can't be popped from
                   # the queue, it's because another process already popped it so we can move on to the
                   # next one.
@@ -50,6 +52,8 @@ module Sidekiq
             logger.error ex.message
             logger.error ex.backtrace.first
           end
+
+          # Run during poll callback
 
           after(poll_interval) { poll }
         end

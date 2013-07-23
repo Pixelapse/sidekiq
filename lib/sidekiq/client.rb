@@ -36,6 +36,7 @@ module Sidekiq
       # Example:
       #   Sidekiq::Client.push('queue' => 'my_queue', 'class' => MyWorker, 'args' => ['foo', 1, :bat => 'bar'])
       #
+
       def push(item)
         normed = normalize_item(item)
         payload = process_single(item['class'], normed)
@@ -43,6 +44,14 @@ module Sidekiq
         pushed = false
         pushed = raw_push([payload]) if payload
         pushed ? payload['jid'] : nil
+      end
+
+      def push(item)
+        normed = generate_payloads(item)
+        
+        around_push do |item|
+          item['jid'] if raw_push([item])
+        end
       end
 
       ##
@@ -69,6 +78,59 @@ module Sidekiq
         pushed = raw_push(payloads) if !payloads.empty?
         pushed ? payloads.size : nil
       end
+
+      def chain_around
+        chain = chain.dup
+        val = nil
+        traverse_chain = lambda do
+          if chain.empty?
+            val = final_action.call
+          else
+            chain.shift.call(*args, &traverse_chain)
+          end
+        end
+
+        traverse_chain.call
+        val
+      end
+
+      def push_bulk(items)
+        payloads = normalize_item(items, true)
+        
+        around_map_push do |payloads|
+          payloads = payloads.compact
+          pushed = raw_push(payloads) if !payloads.empty?
+          pushed ? payloads.size : nil
+        end
+      end
+
+      def chain_map_around(payloads)
+        array = Array.new(payloads.size, false)
+
+        next_chain = lambda do |i|
+          if i < array.size
+            chain = chain.dup
+
+            traverse_chain = lambda do
+              if chain.empty?
+                array[i] = true
+                val = next_chain.call(i+1)
+              else
+                chain.shift.call(*args, &traverse_chain)
+              end
+            end
+
+            if not array[i]
+              next_chain(i+1)
+            end
+          else
+            final_action(payloads.each_with_index.map {|x, i| if array[i]).compact)
+          end
+        end
+
+        next_chain.call(0)
+      end
+
 
       # Resque compatibility helpers.
       #
@@ -113,12 +175,18 @@ module Sidekiq
       def process_single(worker_class, item)
         queue = item['queue']
 
-        Sidekiq.client_middleware.invoke(worker_class, item, queue) do
+        Sidekiq.around_push.run(worker_class, item, queue) do
           item
         end
       end
 
-      def normalize_item(item)
+      def set_job_attrs(item)
+        item['jid'] ||= SecureRandom.hex(12)
+        item['enqueued_at'] = Time.now.to_f
+        item
+      end
+
+      def normalize_item(item, bulk=false)
         raise(ArgumentError, "Message must be a Hash of the form: { 'class' => SomeWorker, 'args' => ['bob', 1, :foo => 'bar'] }") unless item.is_a?(Hash)
         raise(ArgumentError, "Message must include a class and set of arguments: #{item.inspect}") if !item['class'] || !item['args']
         raise(ArgumentError, "Message args must be an Array") unless item['args'].is_a?(Array)
@@ -132,9 +200,17 @@ module Sidekiq
           normalized_item = Sidekiq::Worker::ClassMethods::DEFAULT_OPTIONS.merge(item)
         end
 
-        normalized_item['jid'] ||= SecureRandom.hex(12)
-        normalized_item['enqueued_at'] = Time.now.to_f
-        normalized_item
+        if not bulk
+          normalized_item['jid'] ||= SecureRandom.hex(12)
+          normalized_item['enqueued_at'] = Time.now.to_f
+          [normalized_item]
+        else
+          normalized_item['args'].map do |args|
+            raise ArgumentError, "Bulk arguments must be an Array of Arrays: [[1], [2]]" if !args.is_a?(Array)
+
+            set_job_attrs(normalized_item.merge(:args => args))
+          end.compact
+        end
       end
 
     end
