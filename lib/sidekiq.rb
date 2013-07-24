@@ -77,16 +77,25 @@ module Sidekiq
     end
   end
 
+  define_hooks :around_process
+  define_hooks :around_push
+  define_hooks :poller_hook
+  define_hooks :around_poller_pop
+
   def self.client_middleware
-    @client_chain ||= Client.default_middleware
-    yield @client_chain if block_given?
-    @client_chain
+    new_chain = OldChain.new(@_hooks['around_push'])
+
+    # @client_chain ||= Client.default_middleware
+    yield new_chain if block_given?
+    new_chain
   end
 
   def self.server_middleware
-    @server_chain ||= Processor.default_middleware
-    yield @server_chain if block_given?
-    @server_chain
+    new_chain = OldChain.new(@_hooks['around_process'])
+
+    # @client_chain ||= Client.default_middleware
+    yield new_chain if block_given?
+    new_chain
   end
 
   def self.load_json(string)

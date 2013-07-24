@@ -62,68 +62,191 @@ module Sidekiq
   module Middleware
     class Chain
       attr_reader :entries
+      attr_reader :options
 
-      def initialize
+      def initialize(options={})
+        options[:halt_on_false] = true if not options.include?(:halt_on_false)
+
         @entries = []
+        @options = options
         yield self if block_given?
       end
 
-      def remove(klass)
-        entries.delete_if { |entry| entry.klass == klass }
+      def remove(eid)
+        entries.delete_if { |entry| entry.eid and entry.eid == eid }
       end
 
-      def add(klass, *args)
-        entries << Entry.new(klass, *args) unless exists?(klass)
+      def add(eid=nil, callable=nil, &block)
+        unless exists?(eid)
+          entries << Entry.new(eid, callable, &block)
+        end
       end
 
-      def insert_before(oldklass, newklass, *args)
-        i = entries.index { |entry| entry.klass == newklass }
-        new_entry = i.nil? ? Entry.new(newklass, *args) : entries.delete_at(i)
-        i = entries.find_index { |entry| entry.klass == oldklass } || 0
+      def insert_before(oldeid, neweid=nil, callable=nil, &block)
+        # Remove the entry if it already exists
+        i = entries.index { |entry| entry.eid and entry.eid == neweid }
+        new_entry = i.nil? ? Entry.new(neweid, callable, &block) : entries.delete_at(i)
+        i = entries.find_index { |entry| entry.eid == oldeid } || 0
         entries.insert(i, new_entry)
       end
 
-      def insert_after(oldklass, newklass, *args)
-        i = entries.index { |entry| entry.klass == newklass }
-        new_entry = i.nil? ? Entry.new(newklass, *args) : entries.delete_at(i)
-        i = entries.find_index { |entry| entry.klass == oldklass } || entries.count - 1
+      def insert_after(oldeid, neweid=nil, callable=nil, &block)
+        # Remove the entry if it already exists
+        i = entries.index { |entry| entry.eid and entry.eid == neweid }
+        new_entry = i.nil? ? Entry.new(neweid, callable, &block) : entries.delete_at(i)
+        i = entries.find_index { |entry| entry.eid == oldeid } || entries.count - 1
         entries.insert(i+1, new_entry)
       end
 
-      def exists?(klass)
-        entries.any? { |entry| entry.klass == klass }
-      end
-
-      def retrieve
-        entries.map(&:make_new)
+      def exists?(eid)
+        if eid
+          entries.any? { |entry| entry.eid and entry.eid == eid }
+        end
       end
 
       def clear
         entries.clear
       end
 
+      def invoke(*args)
+        entries.each do |callable|
+          if callable.call(*args) == false and @options[:halt_on_false]
+            return false
+          end
+        end
+
+        true
+      end
+
+      # Pass this an array of arrays of arguments!
+      def invoke_bulk(*args_array)
+        args_array.map do |args|
+          invoke_chain(*args)
+        end
+      end
+    end
+
+    class AroundChain < Chain
       def invoke(*args, &final_action)
-        chain = retrieve.dup
+        # Run the before callback. If halt_on_false is true, return early
+        if options[:before]
+          if options[:before].invoke(*args) == false and options[:halt_on_false]
+            return
+          end
+        end
+
+        chain = entries.dup
+        value = nil
         traverse_chain = lambda do
           if chain.empty?
-            final_action.call
+            value = final_action.call
           else
             chain.shift.call(*args, &traverse_chain)
           end
         end
+
         traverse_chain.call
+
+        # Run the after callback
+        if options[:after]
+          options[:after].invoke(*args)
+        end
+
+        value
+      end
+
+      def invoke_bulk(*args_array, &final_action)
+        success = Array.new(args_array.size, false)
+
+        value = nil
+        next_chain = lambda do |i|
+          if i < success.size
+            chain = entries.dup
+
+            # Run the before callback. If halt_on_false is true, skip to the next item
+            if options[:before]
+              if options[:before].invoke(*args_array[i]) == false and @options[:halt_on_false]
+                return next_chain(i+1)
+              end
+            end
+
+            traverse_chain = lambda do
+              if chain.empty?
+                success[i] = true
+                val = next_chain.call(i+1)
+              else
+                chain.shift.call(*args_array[i], &traverse_chain)
+              end
+            end
+
+            # Even if something in the chain failed to yield, just go to the next chain
+            if not success[i]
+              next_chain(i+1)
+            end
+          else
+            successful_args = args_array.each_with_index.map {|args, i| args if success[i]}.compact
+
+            # Run the final action on all items that succeeded
+            value = final_action(*args_array.each_with_index.map {|args, i| args if success[i]}.compact)
+
+            if options[:after]
+              successful_args.each do |args|
+                options[:after].invoke(*args)
+              end
+            end
+          end
+        end
+
+        next_chain.call(0)
+        value
       end
     end
 
     class Entry
-      attr_reader :klass
-      def initialize(klass, *args)
-        @klass = klass
-        @args  = args
+      attr_reader :eid
+      def initialize(eid=nil, callable=nil, &block)
+        @eid = eid
+        @callable  = (callable || block)
       end
 
-      def make_new
-        @klass.new(*@args)
+      def call(*args, &block)
+        @callable.call(*args, &block)
+      end
+    end
+
+    class OldChain
+      def initialize(new_chain)
+        @new_chain = new_chain
+      end
+
+      [:remove, :exists?, :clear, :retrieve].each do |m|
+        define_method(m) do |*args, &block|
+          @new_chain.send(m, *args, &block)
+        end 
+      end
+
+      def add(klass, *kargs)
+        @new_chain.add(klass, wrap_klass(klass, *args))
+      end
+
+      def insert_before(oldklass, newklass, *args)
+        @new_chain.insert_before(oldklass, newklass, wrap_klass(newklass, *args))
+      end
+
+      def insert_after(oldklass, newklass, *args)
+        @new_chain.insert_after(oldklass, newklass, wrap_klass(newklass, *args))
+      end
+
+      def retrieve
+        @new_chain.entries
+      end
+
+      private
+
+      def wrap_klass(*kargs)
+        Proc.new do |*args, &block|
+          klass.new(*kargs).call(*args, &block)
+        end
       end
     end
   end

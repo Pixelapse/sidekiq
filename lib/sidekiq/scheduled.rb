@@ -13,6 +13,7 @@ module Sidekiq
     # just pops the message back onto its original queue so the
     # workers can pick it up like any other message.
     class Poller
+      include Hooks
       include Util
       include Actor
 
@@ -34,12 +35,14 @@ module Sidekiq
                 # they are pushed onto a work queue and losing the jobs.
                 while message = conn.zrangebyscore(sorted_set, '-inf', now, :limit => [0, 1]).first do
 
-                  # Pop item off the queue and add it to the work queue. If the job can't be popped from
-                  # the queue, it's because another process already popped it so we can move on to the
-                  # next one.
-                  if conn.zrem(sorted_set, message)
-                    Sidekiq::Client.push(Sidekiq.load_json(message))
-                    logger.debug { "enqueued #{sorted_set}: #{message}" }
+                  run_hook :around_poll_pop do
+                    # Pop item off the queue and add it to the work queue. If the job can't be popped from
+                    # the queue, it's because another process already popped it so we can move on to the
+                    # next one.
+                    if conn.zrem(sorted_set, message)
+                      Sidekiq::Client.push(Sidekiq.load_json(message))
+                      logger.debug { "enqueued #{sorted_set}: #{message}" }
+                    end
                   end
                 end
               end
@@ -50,6 +53,8 @@ module Sidekiq
             logger.error ex.message
             logger.error ex.backtrace.first
           end
+
+          run_hook :poll_hook
 
           after(poll_interval) { poll }
         end
