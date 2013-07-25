@@ -77,10 +77,10 @@ module Sidekiq
     end
   end
 
-  define_hooks :around_process
-  define_hooks :around_push
-  define_hooks :poller_hook
-  define_hooks :around_poller_pop
+  # define_hooks :around_process
+  # define_hooks :around_push
+  # define_hooks :poller_hook
+  # define_hooks :around_poller_pop
 
   def self.client_middleware
     new_chain = OldChain.new(@_hooks['around_push'])

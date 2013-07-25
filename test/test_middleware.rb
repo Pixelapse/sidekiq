@@ -23,7 +23,7 @@ class TestMiddleware < Minitest::Test
     end
 
     it 'supports custom middleware' do
-      chain = Sidekiq::Middleware::Chain.new
+      chain = Sidekiq::Middleware::OldChain.new
       chain.add CustomMiddleware, 1, []
 
       assert_equal CustomMiddleware, chain.entries.last.klass
