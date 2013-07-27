@@ -6,12 +6,23 @@ require 'sidekiq/worker'
 require 'sidekiq/redis_connection'
 require 'sidekiq/util'
 require 'sidekiq/api'
+require 'sidekiq/middleware/hooks'
 
 require 'json'
 
 module Sidekiq
   NAME = "Sidekiq"
   LICENSE = 'See LICENSE and the LGPL-3.0 for licensing details.'
+
+  # Need this to make them module attributes
+  class << self
+    include Middleware::Hooks
+
+    define_hooks :around_process
+    define_hooks :around_push
+    define_hooks :on_poll
+    define_hooks :around_poller_pop
+  end
 
   DEFAULTS = {
     :queues => [],
@@ -77,23 +88,14 @@ module Sidekiq
     end
   end
 
-  # define_hooks :around_process
-  # define_hooks :around_push
-  # define_hooks :poller_hook
-  # define_hooks :around_poller_pop
-
   def self.client_middleware
-    new_chain = OldChain.new(@_hooks['around_push'])
-
-    # @client_chain ||= Client.default_middleware
+    @client_chain ||= Client.default_middleware
     yield new_chain if block_given?
     new_chain
   end
 
   def self.server_middleware
-    new_chain = OldChain.new(@_hooks['around_process'])
-
-    # @client_chain ||= Client.default_middleware
+    @client_chain ||= Client.default_middleware
     yield new_chain if block_given?
     new_chain
   end

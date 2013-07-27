@@ -17,7 +17,7 @@ module Sidekiq
     include Actor
 
     def self.default_middleware
-      Middleware::OldChain.new do |m|
+      Middleware::OldChain.new(Sidekiq.around_process_chain) do |m|
         m.add Middleware::Server::Logging
         m.add Middleware::Server::RetryJobs
         m.add Middleware::Server::ActiveRecord

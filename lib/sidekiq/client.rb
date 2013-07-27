@@ -7,7 +7,7 @@ module Sidekiq
     class << self
 
       def default_middleware
-        Middleware::Chain.new do
+        Middleware::OldChain.new(Sidekiq.around_push_chain) do
         end
       end
 
@@ -39,7 +39,7 @@ module Sidekiq
       def push(item)
         normed = normalize_item(item)
 
-        Sidekiq.chain(:around_push).invoke(item['class'], normed, normed['queue']) do |worker_class, payload, queue|
+        Sidekiq.around_push_chain.invoke(item['class'], normed, normed['queue']) do |worker_class, payload, queue|
           raw_push([payload]) ? payload['jid'] : nil
         end
       end
@@ -62,7 +62,7 @@ module Sidekiq
         args_array = normed.map {|item| [items['class'], item, item['queue']]}
 
         # Bulk run!
-        Sidekiq.chain(:around_push).invoke_bulk(*args_array) do |*args_array|
+        Sidekiq.around_push_chain.invoke_bulk(*args_array) do |*args_array|
           if not payloads.empty?
             raw_push(payloads) ? payloads.size : nil
           end

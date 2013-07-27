@@ -91,7 +91,7 @@ class TestMiddleware < Minitest::Test
 
     it 'allows middleware to abruptly stop processing rest of chain' do
       recorder = []
-      chain = Sidekiq::Middleware::Chain.new
+      chain = Sidekiq::Middleware::OldChain.new
       chain.add NonYieldingMiddleware
       chain.add CustomMiddleware, 1, recorder
 

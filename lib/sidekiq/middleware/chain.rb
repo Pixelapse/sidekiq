@@ -72,33 +72,33 @@ module Sidekiq
         yield self if block_given?
       end
 
-      def remove(hid)
-        entries.delete_if { |entry| entry.hid and entry.hid == hid }
+      def remove(klass)
+        entries.delete_if { |entry| entry.klass and entry.klass == klass }
       end
 
-      def add(callable=nil, hid=nil, &block)
-        unless hid and exists?(hid)
-          entries << Entry.new(callable, hid, &block)
+      def add(callable=nil, klass=nil, &block)
+        unless klass and exists?(klass)
+          entries << Entry.new(callable, klass, &block)
         end
       end
 
-      def insert_before(oldhid, callable=nil, newhid=nil, &block)
+      def insert_before(oldklass, callable=nil, newklass=nil, &block)
         # Remove the entry if it already exists
-        new_entry = remove_old(newhid) || Entry.new(callable, newhid, &block)
-        i = entries.find_index { |entry| entry.hid == oldhid } || 0
+        new_entry = remove_old(newklass) || Entry.new(callable, newklass, &block)
+        i = entries.find_index { |entry| entry.klass == oldklass } || 0
         entries.insert(i, new_entry)
       end
 
-      def insert_after(oldhid, callable=nil, newhid=nil, &block)
+      def insert_after(oldklass, callable=nil, newklass=nil, &block)
         # Remove the entry if it already exists
-        new_entry = remove_old(newhid) || Entry.new(callable, newhid, &block)
-        i = entries.find_index { |entry| entry.hid == oldhid } || entries.count - 1
+        new_entry = remove_old(newklass) || Entry.new(callable, newklass, &block)
+        i = entries.find_index { |entry| entry.klass == oldklass } || entries.count - 1
         entries.insert(i+1, new_entry)
       end
 
-      def exists?(hid)
-        if hid
-          entries.any? { |entry| entry.hid and entry.hid == hid }
+      def exists?(klass)
+        if klass
+          entries.any? { |entry| entry.klass and entry.klass == klass }
         end
       end
 
@@ -125,8 +125,8 @@ module Sidekiq
 
       private
 
-      def remove_old(hid)
-        if hid and i = entries.index { |entry| entry.hid and entry.hid == hid }
+      def remove_old(klass)
+        if klass and i = entries.index { |entry| entry.klass and entry.klass == klass }
           entries.delete_at(i)
         end
       end
@@ -209,9 +209,9 @@ module Sidekiq
     end
 
     class Entry
-      attr_reader :hid
-      def initialize(callable=nil, hid=nil, &block)
-        @hid = hid
+      attr_reader :klass
+      def initialize(callable=nil, klass=nil, &block)
+        @klass = klass
         @callable  = (callable || block)
       end
 
@@ -223,16 +223,18 @@ module Sidekiq
     class OldChain
       def initialize(new_chain=nil)
         @new_chain = new_chain || AroundChain.new
+
+        yield self if block_given?
       end
 
-      [:remove, :exists?, :clear, :retrieve].each do |m|
+      [:remove, :exists?, :clear, :retrieve, :invoke, :entries].each do |m|
         define_method(m) do |*args, &block|
           @new_chain.send(m, *args, &block)
         end 
       end
 
       def add(klass, *kargs)
-        @new_chain.add(wrap_klass(klass, *args), klass)
+        @new_chain.add(wrap_klass(klass, *kargs), klass)
       end
 
       def insert_before(oldklass, newklass, *args)
@@ -249,7 +251,7 @@ module Sidekiq
 
       private
 
-      def wrap_klass(*kargs)
+      def wrap_klass(klass, *kargs)
         Proc.new do |*args, &block|
           klass.new(*kargs).call(*args, &block)
         end
