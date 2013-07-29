@@ -14,15 +14,12 @@ module Sidekiq
   NAME = "Sidekiq"
   LICENSE = 'See LICENSE and the LGPL-3.0 for licensing details.'
 
-  # Need this to make them module attributes
-  class << self
-    include Middleware::Hooks
+  include Middleware::Hooks
 
-    define_hooks :around_process
-    define_hooks :around_push
-    define_hooks :on_poll
-    define_hooks :around_poller_pop
-  end
+  define_hooks :around_process
+  # define_hooks :around_push
+  # define_hooks :on_poll
+  # define_hooks :around_poller_pop
 
   DEFAULTS = {
     :queues => [],

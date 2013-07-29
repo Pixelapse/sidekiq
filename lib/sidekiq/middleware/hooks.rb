@@ -55,6 +55,22 @@ module Sidekiq
       end
 
       def self.included(base)
+        if base.is_a? Module
+          puts "MODULE"
+        else
+          puts "NOT MODULE"
+        end
+
+        if base.is_a? Module
+          base.instance_eval do
+            extend InheritableAttribute
+            extend ClassMethods
+            inheritable_attr :_hooks
+            self._hooks= HookSet.new
+          end
+        end
+
+
         base.class_eval do
           extend InheritableAttribute
           extend ClassMethods
