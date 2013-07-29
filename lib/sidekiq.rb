@@ -28,6 +28,11 @@ module Sidekiq
     }
   }
 
+  # Poller hook
+  class << self
+    attr_accessor :on_poll
+  end
+
   def self.❨╯°□°❩╯︵┻━┻
     puts "Calm down, bro"
   end

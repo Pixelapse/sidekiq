@@ -50,6 +50,17 @@ module Sidekiq
             logger.error ex.message
             logger.error ex.backtrace.first
           end
+          
+          begin
+            if Sidekiq.on_poll
+              Sidekiq.on_poll.call
+            end
+          rescue => ex
+            # Most likely a problem with redis networking.
+            # Punt and try again at the next interval
+            logger.error ex.message
+            logger.error ex.backtrace.first
+          end
 
           # Randomizing scales the interval by half since
           # on average calling `rand` returns 0.5.
